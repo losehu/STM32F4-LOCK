@@ -1,0 +1,259 @@
+#include "sys.h"
+#include "delay.h"
+#include "usart.h"
+#include "led.h"
+#include "lcd.h"
+#include "key.h"
+#include <string.h>
+/*------------------------------------------------
+      按键功能图
+		|  1  |  2  |  3  | <-  |
+		|  4  |  5  |  6  |     |
+		|  7  |  8  |  9  | Rest|
+		|     |  0  |     |  =  |
+------------------------------------------------*/
+u16 right=85;
+u16 down=50;
+u16 explod=20; //窗体扩展
+u16 local=1;  //输入模式
+u16 sign=0;  //显示模式
+char num1_str[12];
+char num3_str[12];
+char num4_str[12];
+unsigned int  KEYCODE=0;                 //定义按键编码
+unsigned char key_flag = 1;
+u16 cnt=0;
+void Load_Drow_Dialog(void)
+{
+    LCD_Clear(WHITE);//清屏
+    POINT_COLOR=RED;//设置画笔红色
+    LCD_DrawRectangle(4+right-explod,5+down,150+right+explod,82+down);
+    LCD_DrawLine(4+right-explod,30+down,150+right+explod,30+down);
+}
+//LCD显示程序
+void draw()//显示信息
+{
+    if(sign<=2)
+    {
+        Load_Drow_Dialog();
+        POINT_COLOR=MAGENTA;//设置字体为黄色
+        LCD_ShowString(30+right,10+down,200,16,16,"Set Passowd");
+        POINT_COLOR=BLUE;//设置字体为蓝色
+        LCD_ShowString(6+right-explod,40+down,200,16,16,"Password:");
+        LCD_ShowString(80+right-explod,40+down,200,16,16,num1_str);
+        LCD_ShowString(6+right-explod,60+down,200,16,16,"Confirm :");
+        LCD_ShowString(80+right-explod,60+down,200,16,16,num4_str);
+        if(sign==1)
+        {
+            POINT_COLOR=RED;
+            LCD_ShowString(30,100+down,400,16,16,"The password is inconsistent！！！");
+            sign=0;
+            delay_ms(1500);
+        }
+        if(sign==2)
+        {
+            POINT_COLOR=GREEN;
+            LCD_ShowString(30,100+down,400,16,16,"OK!Password set successfully!!!");
+            sign++;
+            delay_ms(1500);
+        }
+    }
+    else if(sign>2&&sign!=6)
+    {
+        Load_Drow_Dialog();
+        POINT_COLOR=MAGENTA;//设置字体为黄色
+        LCD_ShowString(30+right,10+down,200,16,16,"Enter Passowd");
+        POINT_COLOR=BLACK;//设置字体为蓝色
+        LCD_ShowString(6+right-explod,50+down,250,16,16,"Password:");
+        LCD_ShowString(80+right-explod,50+down,250,16,16,num3_str);
+        if(sign==4)
+        {
+            POINT_COLOR=RED;
+            LCD_ShowString(30,100+down,400,16,16,"Wrong password!!!");
+            delay_ms(1500);
+            sign--;
+        }
+        if(sign==5)
+        {
+            POINT_COLOR=GREEN;
+            LCD_ShowString(30,100+down,400,16,16,"The password is correct!!!");
+            delay_ms(1500);
+            sign++;
+        }
+
+    }
+    else if(sign==6)
+    {
+        LCD_Init();
+        POINT_COLOR=GREEN;
+        LCD_ShowString(30+right,10+down,600,16,16,"Unlocked");
+    }
+}
+void clr(char *p)
+{
+    int j;
+    for(j=strlen(p); j>=0; j--)
+    {
+        p[j]='\0';
+    }
+    cnt=0;
+}
+
+//通用定时器3中断初始化
+//arr：自动重装值。
+//psc：时钟预分频数
+//定时器溢出时间计算方法:Tout=((arr+1)*(psc+1))/Ft us.
+//Ft=定时器工作频率,单位:Mhz 168Mhz/4=42，Ft=42*2=84Mhz
+//这里使用的是定时器3!
+void TIM3_Int_Init(u16 arr,u16 psc)
+{
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
+    NVIC_InitTypeDef NVIC_InitStructure;
+
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3,ENABLE);  ///使能TIM3时钟
+
+    TIM_TimeBaseInitStructure.TIM_Period = arr; 	//自动重装载值
+    TIM_TimeBaseInitStructure.TIM_Prescaler=psc;  //定时器分频
+    TIM_TimeBaseInitStructure.TIM_CounterMode=TIM_CounterMode_Up; //向上计数模式
+    TIM_TimeBaseInitStructure.TIM_ClockDivision=TIM_CKD_DIV1;
+
+    TIM_TimeBaseInit(TIM3,&TIM_TimeBaseInitStructure);//初始化TIM3
+
+    TIM_ITConfig(TIM3,TIM_IT_Update,ENABLE); //允许定时器3更新中断
+    TIM_Cmd(TIM3,ENABLE); //使能定时器3
+
+    NVIC_InitStructure.NVIC_IRQChannel=TIM3_IRQn; //定时器3中断
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=0x01; //抢占优先级1
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority=0x03; //子优先级3
+    NVIC_InitStructure.NVIC_IRQChannelCmd=ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+
+}
+
+//定时器3中断服务函数
+void TIM3_IRQHandler(void)
+{
+    if(TIM_GetITStatus(TIM3,TIM_IT_Update)==SET) //溢出中断
+    {
+        LED2=!LED2;//D2翻转
+        draw();	   //显示信息
+
+    }
+    TIM_ClearITPendingBit(TIM3,TIM_IT_Update);  //清除中断标志位
+}
+u16 judge(char *num1_str,char *num4_str)
+{
+    u16 flag=1;
+    if(strlen(num1_str)!=strlen(num4_str))return 0;
+    for(u16 i=0; i<strlen(num1_str); i++)
+    {
+        if(num1_str[i]!=num4_str[i])
+        {
+            flag=0;
+            break;
+        }
+    }
+    if(flag)return 1;
+    else return 0;
+}
+void lock()
+{
+    if(KEYCODE!='F')//按键值不等于F,有键按下
+    {
+        if(sign==6)
+        {
+            if(KEYCODE==12)
+            {
+                local=1;
+                sign=0;
+                clr(num1_str);
+                clr(num4_str);
+                clr(num3_str);
+            }
+        }
+        else
+        {
+            if(KEYCODE<=9)  //输密码
+            {
+                if(local==1)
+                {
+                    if(cnt<10)  num1_str[cnt++]=48+KEYCODE;
+                }
+                else if(local==2)
+                {
+                    if(cnt<10) num4_str[cnt++]=48+KEYCODE;
+                }
+                else if(local==3)
+                {
+                    if(cnt<10) num3_str[cnt++]=48+KEYCODE;
+                }
+            }
+            if(KEYCODE==11)
+            {
+                if(local==1) clr(num1_str);
+                else if(local==2) clr(num4_str);
+                else if(local==3) clr(num3_str);
+            }
+            else if(KEYCODE==10)//退格
+            {
+                if(local==1&&cnt>0)       num1_str[--cnt]='\0';
+                else if(local==2&&cnt>0)  num4_str[--cnt]='\0';
+                else if(local==3&&cnt>0)  num3_str[--cnt]='\0';
+            }
+            else if(KEYCODE==15) //确认输入
+            {
+                cnt=0;
+                if(local==1)local++;                   //Comfirm:
+                else if(local==2)                      //确定设置密码
+                {
+                    if(!judge(num1_str,num4_str))     //两次输入密码不一致
+                    {
+                        local=1;
+                        clr(num1_str);
+                        clr(num4_str);
+                        sign=1;
+                    }
+                    else
+                    {
+                        local=3;
+                        sign=2;
+                    }
+                }
+                else if(local==3)
+                {
+                    if(!judge(num1_str,num3_str))     //密码错误
+                    {
+                        local=3;
+                        clr(num3_str);
+                        sign=4;
+                    }
+                    else if(judge(num1_str,num3_str))     //密码正确
+                    {
+                        local=100;
+                        cnt=100;
+                        sign=5;
+                    }
+                }
+            }
+        }
+    }
+}
+int main(void)
+{
+                 delay_init(168);	    	 //延时函数初始化
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);	 //设置NVIC中断分组2:2位抢占优先级，2位响应优先级
+    uart_init(115200);	 	//串口初始化为115200
+    LED_Init();			     //LED端口初始化
+    LCD_Init();
+    key_Configuration();//键盘初始化
+    TIM3_Int_Init(500 - 1, 8400 - 1);	//定时器时钟84M，分频系数8400，所以84M/8400=10Khz的计数频率，
+    //一个周期是0.1ms，计数500次为50ms
+    draw();	   //显示信息
+    POINT_COLOR=RED;
+    delay_ms(100);
+    while(1)
+    {
+        KEYCODE=KEY_Scanf();
+        lock();
+    }
+}
